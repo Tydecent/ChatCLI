@@ -35,6 +35,7 @@ try:
     from rich.markdown import Markdown
     from rich.panel import Panel
     from rich.table import Table
+    from rich.box import Box
     from rich.theme import Theme
     from prompt_toolkit import PromptSession
     from prompt_toolkit.history import FileHistory
@@ -66,15 +67,16 @@ DEFAULTS: dict = {
 
 THEME = Theme(
     {
-        "cli.info": "dim",
-        "cli.accent": "bold magenta",
+        "cli.info": "#e9a3c1",
+        "cli.accent": "bold #ff69b4",
         "cli.warn": "yellow",
         "cli.err": "bold red",
-        "cli.dim": "bright_black",
+        "cli.dim": "#b77b98",
     }
 )
 
-PROMPT_STYLE = PromptStyle.from_dict({"prompt": "bold #00afff"})
+PROMPT_STYLE = PromptStyle.from_dict({"prompt": "bold #ff69b4"})
+AI_REPLY_BOX = Box("    \n│   \n    \n│   \n│   \n    \n│   \n    \n")
 
 
 # --------------------------------------------------------------------------- #
@@ -288,7 +290,12 @@ class ChatApp:
                     status.stop()
                     status = None
                     live = Live(
-                        Markdown(""),
+                        Panel(
+                            Markdown(""),
+                            box=AI_REPLY_BOX,
+                            border_style="#8ecfff",
+                            padding=(0, 1),
+                        ),
                         console=self.console,
                         refresh_per_second=12,
                         vertical_overflow="visible",
@@ -299,11 +306,25 @@ class ChatApp:
 
                 now = time.monotonic()
                 if now - last_paint >= 0.05:
-                    live.update(Markdown(buffer))
+                    live.update(
+                        Panel(
+                            Markdown(buffer),
+                            box=AI_REPLY_BOX,
+                            border_style="#4D6BFE",
+                            padding=(0, 1),
+                        )
+                    )
                     last_paint = now
 
             if live is not None:
-                live.update(Markdown(buffer))
+                live.update(
+                    Panel(
+                        Markdown(buffer),
+                        box=AI_REPLY_BOX,
+                        border_style="#4D6BFE",
+                        padding=(0, 1),
+                    )
+                )
             else:
                 self.console.print("[cli.warn]（模型没有返回任何内容）[/cli.warn]")
                 return None
