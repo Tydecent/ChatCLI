@@ -169,8 +169,6 @@ class ChatApp:
         grid.add_column(style="cli.dim", justify="right", no_wrap=True)
         grid.add_column(style="white", overflow="fold")
         grid.add_row("model", f"[cli.accent]{self.model}[/cli.accent]")
-        grid.add_row("endpoint", str(self.client.base_url))
-        grid.add_row("system", system_text)
 
         self.console.print()
         self.console.print(
