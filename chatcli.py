@@ -54,7 +54,7 @@ VERSION = "1.0.0"
 
 CONFIG_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = CONFIG_DIR / "config.json"
-HISTORY_FILE = CONFIG_DIR / "history.txt"
+LOG_FILE = CONFIG_DIR / "chat.log"
 
 DEFAULTS: dict = {
     "api_key": "",
@@ -153,7 +153,7 @@ class ChatApp:
 
         CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         self.session: PromptSession = PromptSession(
-            history=FileHistory(str(HISTORY_FILE)),
+            history=FileHistory(str(LOG_FILE)),
             style=PROMPT_STYLE,
             enable_open_in_editor=True,  # 长文本按 Ctrl+X Ctrl+E 调出编辑器
             complete_while_typing=False,
@@ -168,6 +168,7 @@ class ChatApp:
         grid = Table.grid(padding=(0, 2))
         grid.add_column(style="cli.dim", justify="right", no_wrap=True)
         grid.add_column(style="white", overflow="fold")
+        grid.add_row("endpoint", str(self.client.base_url))
         grid.add_row("model", f"[cli.accent]{self.model}[/cli.accent]")
 
         self.console.print()
@@ -214,6 +215,7 @@ class ChatApp:
             "[cli.dim]提示：Ctrl+C 清空当前输入（连按两次退出） · "
             "Ctrl+D 退出 · Ctrl+X Ctrl+E 打开外部编辑器[/cli.dim]"
         )
+        self.console.print(f"[cli.dim]AI 回复日志：{LOG_FILE}[/cli.dim]")
 
     def print_stats(self) -> None:
         duration = int(time.time() - self.started_at)
@@ -268,6 +270,7 @@ class ChatApp:
                 messages=self.messages,
                 temperature=self.temperature,
                 stream=True,
+                extra_body={"thinking": {"type": "disabled"}},
             )
 
             status = self.console.status("[cli.info]思考中…[/cli.info]", spinner="dots")
@@ -339,6 +342,17 @@ class ChatApp:
             self.messages.append({"role": "assistant", "content": reply})
             self.rounds += 1
             self.chars += len(reply)
+            try:
+                with LOG_FILE.open("a", encoding="utf-8") as log_file:
+                    log_file.write(
+                        f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
+                        f"model={self.model}\n"
+                    )
+                    for line in reply.splitlines():
+                        log_file.write(f"AI: {line}\n")
+                    log_file.write("\n")
+            except OSError as exc:
+                self.console.print(f"[cli.warn]无法写入回答日志：{exc}[/cli.warn]")
             return True
         return False
 
@@ -546,7 +560,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "  chatcli -s '你是一个诗人' -t 1.2              # 自定义系统提示与温度\n"
             "  chatcli --save-config                        # 保存当前配置\n"
             f"\n配置文件: {CONFIG_FILE}\n"
-            f"输入历史: {HISTORY_FILE}\n"
+            f"输入历史与 AI 回复日志: {LOG_FILE}\n"
         ),
     )
     parser.add_argument("-m", "--model", help="模型名称")
