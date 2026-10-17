@@ -69,6 +69,7 @@ THEME = Theme(
     {
         "cli.info": "#e9a3c1",
         "cli.accent": "bold #ff69b4",
+        "cli.deepseek": "bold #4D6BFE",
         "cli.warn": "yellow",
         "cli.err": "bold red",
         "cli.dim": "#b77b98",
@@ -161,6 +162,14 @@ class ChatApp:
             complete_while_typing=False,
         )
 
+    @property
+    def model_style(self) -> str:
+        return "cli.deepseek" if "deepseek" in self.model.lower() else "cli.accent"
+
+    @property
+    def model_border_color(self) -> str:
+        return "#4D6BFE" if "deepseek" in self.model.lower() else "#ff69b4"
+
     # ---------------------------------------------------------------- 界面 --
     def print_banner(self) -> None:
         system_text = self.get_system() or "（未设置）"
@@ -171,7 +180,7 @@ class ChatApp:
         grid.add_column(style="cli.dim", justify="right", no_wrap=True)
         grid.add_column(style="white", overflow="fold")
         grid.add_row("endpoint", str(self.client.base_url))
-        grid.add_row("model", f"[cli.accent]{self.model}[/cli.accent]")
+        grid.add_row("model", f"[{self.model_style}]{self.model}[/{self.model_style}]")
 
         self.console.print()
         self.console.print(
@@ -227,7 +236,7 @@ class ChatApp:
         grid = Table.grid(padding=(0, 2))
         grid.add_column(style="cli.dim", justify="right")
         grid.add_column(style="white")
-        grid.add_row("模型", f"[cli.accent]{self.model}[/cli.accent]")
+        grid.add_row("模型", f"[{self.model_style}]{self.model}[/{self.model_style}]")
         grid.add_row("温度", str(self.temperature))
         grid.add_row("上下文消息数", str(len(self.messages)))
         grid.add_row("对话轮次", str(self.rounds))
@@ -293,7 +302,7 @@ class ChatApp:
                         Panel(
                             Markdown(""),
                             box=AI_REPLY_BOX,
-                            border_style="#8ecfff",
+                            border_style=self.model_border_color,
                             padding=(0, 1),
                         ),
                         console=self.console,
@@ -310,7 +319,7 @@ class ChatApp:
                         Panel(
                             Markdown(buffer),
                             box=AI_REPLY_BOX,
-                            border_style="#4D6BFE",
+                            border_style=self.model_border_color,
                             padding=(0, 1),
                         )
                     )
@@ -321,7 +330,7 @@ class ChatApp:
                     Panel(
                         Markdown(buffer),
                         box=AI_REPLY_BOX,
-                        border_style="#4D6BFE",
+                        border_style=self.model_border_color,
                         padding=(0, 1),
                     )
                 )
@@ -433,7 +442,9 @@ class ChatApp:
         if data.get("model"):
             self.model = data["model"]
         self.console.print(
-            f"[cli.info]✓ 已载入 {len(messages)} 条消息（模型：{self.model}）[/cli.info]"
+            f"[cli.info]✓ 已载入 {len(messages)} 条消息（模型：[/cli.info]"
+            f"[{self.model_style}]{self.model}[/{self.model_style}]"
+            "[cli.info]）[/cli.info]"
         )
 
     # ---------------------------------------------------------- 命令分发 --
@@ -452,9 +463,15 @@ class ChatApp:
         elif cmd == "model":
             if arg:
                 self.model = arg
-                self.console.print(f"[cli.info]✓ 已切换模型 →[/cli.info] [cli.accent]{arg}[/cli.accent]")
+                self.console.print(
+                    f"[cli.info]✓ 已切换模型 →[/cli.info] "
+                    f"[{self.model_style}]{arg}[/{self.model_style}]"
+                )
             else:
-                self.console.print(f"[cli.info]当前模型：[/cli.info][cli.accent]{self.model}[/cli.accent]")
+                self.console.print(
+                    f"[cli.info]当前模型：[/cli.info]"
+                    f"[{self.model_style}]{self.model}[/{self.model_style}]"
+                )
 
         elif cmd == "system":
             if not arg:
