@@ -38,7 +38,7 @@ try:
     from rich.box import Box
     from rich.theme import Theme
     from prompt_toolkit import PromptSession
-    from prompt_toolkit.history import FileHistory
+    from prompt_toolkit.history import InMemoryHistory
     from prompt_toolkit.styles import Style as PromptStyle
 except ImportError as exc:  # pragma: no cover
     sys.stderr.write(
@@ -55,7 +55,7 @@ VERSION = "1.0.0"
 
 CONFIG_DIR = Path(__file__).resolve().parent
 CONFIG_FILE = CONFIG_DIR / "config.json"
-LOG_FILE = CONFIG_DIR / "chat.log"
+CHAT_HISTORY_DIR = CONFIG_DIR / "chathistory"
 
 DEFAULTS: dict = {
     "api_key": "",
@@ -153,14 +153,47 @@ class ChatApp:
         self.started_at = time.time()
         self.rounds = 0
         self.chars = 0
+        session_id = time.strftime("%Y%m%d-%H%M%S") + f"-{time.time_ns() % 1_000_000_000:09d}"
+        self.session_log_path = CHAT_HISTORY_DIR / f"chat-{session_id}.json"
+        self.session_log = {
+            "started_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "ended_at": None,
+            "status": "in_progress",
+            "settings": self.current_settings(),
+            "turns": [],
+        }
 
-        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
         self.session: PromptSession = PromptSession(
-            history=FileHistory(str(LOG_FILE)),
+            history=InMemoryHistory(),
             style=PROMPT_STYLE,
             enable_open_in_editor=True,  # 长文本按 Ctrl+X Ctrl+E 调出编辑器
             complete_while_typing=False,
         )
+        self.persist_session_log()
+
+    def current_settings(self) -> dict:
+        return {
+            "endpoint": str(self.client.base_url),
+            "model": self.model,
+            "temperature": self.temperature,
+            "system": self.get_system(),
+        }
+
+    def persist_session_log(self) -> None:
+        self.session_log["settings"] = self.current_settings()
+        try:
+            CHAT_HISTORY_DIR.mkdir(parents=True, exist_ok=True)
+            self.session_log_path.write_text(
+                json.dumps(self.session_log, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            self.console.print(f"[cli.warn]无法写入会话日志：{exc}[/cli.warn]")
+
+    def finish_session_log(self) -> None:
+        self.session_log["ended_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.session_log["status"] = "completed"
+        self.persist_session_log()
 
     @property
     def model_style(self) -> str:
@@ -226,7 +259,7 @@ class ChatApp:
             "[cli.dim]提示：Ctrl+C 清空当前输入（连按两次退出） · "
             "Ctrl+D 退出 · Ctrl+X Ctrl+E 打开外部编辑器[/cli.dim]"
         )
-        self.console.print(f"[cli.dim]AI 回复日志：{LOG_FILE}[/cli.dim]")
+        self.console.print(f"[cli.dim]JSON 会话日志：{self.session_log_path}[/cli.dim]")
 
     def print_stats(self) -> None:
         duration = int(time.time() - self.started_at)
@@ -268,9 +301,10 @@ class ChatApp:
             self.messages.insert(0, {"role": "system", "content": text})
 
     # ---------------------------------------------------------------- 请求 --
-    def stream_reply(self) -> str | None:
-        """向 API 发起流式请求并实时渲染，返回完整回复文本（失败返回 None）。"""
+    def stream_reply(self) -> tuple[str | None, dict | None]:
+        """向 API 发起流式请求并返回完整回复与 token 用量。"""
         buffer = ""
+        usage = None
         status = None
         live = None
         last_paint = 0.0
@@ -281,6 +315,7 @@ class ChatApp:
                 messages=self.messages,
                 temperature=self.temperature,
                 stream=True,
+                stream_options={"include_usage": True},
                 extra_body={"thinking": {"type": "disabled"}},
             )
 
@@ -288,6 +323,18 @@ class ChatApp:
             status.start()
 
             for chunk in stream:
+                chunk_usage = getattr(chunk, "usage", None)
+                if chunk_usage is not None:
+                    def usage_value(name: str):
+                        if isinstance(chunk_usage, dict):
+                            return chunk_usage.get(name)
+                        return getattr(chunk_usage, name, None)
+
+                    usage = {
+                        "prompt_tokens": usage_value("prompt_tokens"),
+                        "completion_tokens": usage_value("completion_tokens"),
+                        "total_tokens": usage_value("total_tokens"),
+                    }
                 if not chunk.choices:
                     continue
                 delta = chunk.choices[0].delta
@@ -336,7 +383,7 @@ class ChatApp:
                 )
             else:
                 self.console.print("[cli.warn]（模型没有返回任何内容）[/cli.warn]")
-                return None
+                return None, usage
 
         except KeyboardInterrupt:
             self.console.print()
@@ -346,43 +393,45 @@ class ChatApp:
             self.console.print(
                 "[cli.err]✗ 无法连接到 API，请检查 base_url 与网络。[/cli.err]"
             )
-            return None
+            return None, usage
         except AuthenticationError:
             self.console.print()
             self.console.print("[cli.err]✗ 认证失败，请检查 API Key。[/cli.err]")
-            return None
+            return None, usage
         except APIError as exc:
             self.console.print()
             self.console.print(f"[cli.err]✗ API 错误：{exc}[/cli.err]")
-            return None
+            return None, usage
         finally:
             if status is not None:
                 status.stop()
             if live is not None:
                 live.stop()
 
-        return buffer or None
+        return buffer or None, usage
 
     def _request(self) -> bool:
         """对当前 messages 发起一次请求；成功则追加 assistant 回复。"""
         self.console.print()
-        reply = self.stream_reply()
+        user_message = next(
+            (message["content"] for message in reversed(self.messages) if message["role"] == "user"),
+            "",
+        )
+        reply, usage = self.stream_reply()
         self.console.print()
         if reply:
             self.messages.append({"role": "assistant", "content": reply})
             self.rounds += 1
             self.chars += len(reply)
-            try:
-                with LOG_FILE.open("a", encoding="utf-8") as log_file:
-                    log_file.write(
-                        f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] "
-                        f"model={self.model}\n"
-                    )
-                    for line in reply.splitlines():
-                        log_file.write(f"AI: {line}\n")
-                    log_file.write("\n")
-            except OSError as exc:
-                self.console.print(f"[cli.warn]无法写入回答日志：{exc}[/cli.warn]")
+            self.session_log["turns"].append(
+                {
+                    "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                    "user": user_message,
+                    "assistant": reply,
+                    "usage": usage,
+                }
+            )
+            self.persist_session_log()
             return True
         return False
 
@@ -441,6 +490,7 @@ class ChatApp:
         self.messages = messages
         if data.get("model"):
             self.model = data["model"]
+        self.persist_session_log()
         self.console.print(
             f"[cli.info]✓ 已载入 {len(messages)} 条消息（模型：[/cli.info]"
             f"[{self.model_style}]{self.model}[/{self.model_style}]"
@@ -463,6 +513,7 @@ class ChatApp:
         elif cmd == "model":
             if arg:
                 self.model = arg
+                self.persist_session_log()
                 self.console.print(
                     f"[cli.info]✓ 已切换模型 →[/cli.info] "
                     f"[{self.model_style}]{arg}[/{self.model_style}]"
@@ -486,9 +537,11 @@ class ChatApp:
                 )
             elif arg == "-":
                 self.set_system("")
+                self.persist_session_log()
                 self.console.print("[cli.info]✓ 已清除系统提示词[/cli.info]")
             else:
                 self.set_system(arg)
+                self.persist_session_log()
                 self.console.print("[cli.info]✓ 已更新系统提示词[/cli.info]")
 
         elif cmd in ("temp", "temperature"):
@@ -503,6 +556,7 @@ class ChatApp:
                     self.console.print("[cli.warn]请输入 0 ~ 2 之间的数字[/cli.warn]")
                 else:
                     self.temperature = value
+                    self.persist_session_log()
                     self.console.print(f"[cli.info]✓ 温度已设为 {value}[/cli.info]")
 
         elif cmd in ("clear", "cls"):
@@ -550,35 +604,38 @@ class ChatApp:
         self.print_banner()
         last_interrupt = 0.0
 
-        while True:
-            try:
-                line = self.session.prompt([("class:prompt", "❯ ")])
-            except KeyboardInterrupt:
-                now = time.time()
-                if now - last_interrupt < 1.5:
+        try:
+            while True:
+                try:
+                    line = self.session.prompt([("class:prompt", "❯ ")])
+                except KeyboardInterrupt:
+                    now = time.time()
+                    if now - last_interrupt < 1.5:
+                        self.console.print()
+                        break
+                    last_interrupt = now
+                    self.console.print(
+                        "[cli.dim]再按一次 Ctrl+C 退出，或输入 /exit[/cli.dim]"
+                    )
+                    continue
+                except EOFError:
                     self.console.print()
                     break
-                last_interrupt = now
-                self.console.print(
-                    "[cli.dim]再按一次 Ctrl+C 退出，或输入 /exit[/cli.dim]"
-                )
-                continue
-            except EOFError:
-                self.console.print()
-                break
 
-            line = line.strip()
-            if not line:
-                continue
+                line = line.strip()
+                if not line:
+                    continue
 
-            if line.startswith("/"):
-                if not self.handle_command(line):
-                    break
-                continue
+                if line.startswith("/"):
+                    if not self.handle_command(line):
+                        break
+                    continue
 
-            self.send(line)
+                self.send(line)
 
-        self.console.print("[cli.info]再见 👋[/cli.info]")
+            self.console.print("[cli.info]再见 👋[/cli.info]")
+        finally:
+            self.finish_session_log()
 
 
 # --------------------------------------------------------------------------- #
@@ -598,7 +655,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "  chatcli -s '你是一个诗人' -t 1.2              # 自定义系统提示与温度\n"
             "  chatcli --save-config                        # 保存当前配置\n"
             f"\n配置文件: {CONFIG_FILE}\n"
-            f"输入历史与 AI 回复日志: {LOG_FILE}\n"
+            f"JSON 会话日志目录: {CHAT_HISTORY_DIR}\n"
         ),
     )
     parser.add_argument("-m", "--model", help="模型名称")
