@@ -3,4 +3,4 @@
 
 openai>=1.30.0          # 需要 stream_options（流式返回 token 用量）
 rich>=13.0.0            # Console / Live / Markdown / Panel / Table / Box / Theme
-prompt_toolkit>=3.0.0   # PromptSession / InMemoryHistory / Style
+prompt_toolkit>=3.0.53   # PromptSession / InMemoryHistory / Style
