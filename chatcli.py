@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 chatcli — 一个漂亮的命令行 AI 聊天客户端（兼容 OpenAI API）
 
@@ -29,17 +27,17 @@ from pathlib import Path
 # 依赖检查
 # --------------------------------------------------------------------------- #
 try:
-    from openai import OpenAI, APIError, APIConnectionError, AuthenticationError
+    from openai import APIConnectionError, APIError, AuthenticationError, OpenAI
+    from prompt_toolkit import PromptSession
+    from prompt_toolkit.history import InMemoryHistory
+    from prompt_toolkit.styles import Style as PromptStyle
+    from rich.box import Box
     from rich.console import Console
     from rich.live import Live
     from rich.markdown import Markdown
     from rich.panel import Panel
     from rich.table import Table
-    from rich.box import Box
     from rich.theme import Theme
-    from prompt_toolkit import PromptSession
-    from prompt_toolkit.history import InMemoryHistory
-    from prompt_toolkit.styles import Style as PromptStyle
 except ImportError as exc:  # pragma: no cover
     sys.stderr.write(
         f"\n缺少依赖：{getattr(exc, 'name', exc)}\n\n"
@@ -338,7 +336,7 @@ class ChatApp:
             for chunk in stream:
                 chunk_usage = getattr(chunk, "usage", None)
                 if chunk_usage is not None:
-                    def usage_value(name: str):
+                    def usage_value(name: str, chunk_usage=chunk_usage):
                         if isinstance(chunk_usage, dict):
                             return chunk_usage.get(name)
                         return getattr(chunk_usage, name, None)
