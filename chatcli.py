@@ -63,6 +63,9 @@ DEFAULTS: dict = {
     "model": "gpt-4o-mini",
     "system": "你是一个乐于助人、回答准确的 AI 助手。",
     "temperature": 0.7,
+    # 供应商专用参数，原样附加到请求体（extra_body）。
+    # 例如 DeepSeek 关闭深度思考：{"thinking": {"type": "disabled"}}
+    "extra_body": {},
 }
 
 THEME = Theme(
@@ -85,6 +88,7 @@ AI_REPLY_BOX = Box("    \n│   \n    \n│   \n│   \n    \n│   \n    \n")
 # --------------------------------------------------------------------------- #
 def load_config() -> dict:
     cfg = dict(DEFAULTS)
+    cfg["extra_body"] = dict(DEFAULTS["extra_body"])
     if CONFIG_FILE.exists():
         try:
             data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -92,6 +96,10 @@ def load_config() -> dict:
                 cfg.update({k: v for k, v in data.items() if k in DEFAULTS})
         except (OSError, json.JSONDecodeError) as exc:
             sys.stderr.write(f"警告：配置文件读取失败（{exc}），已使用默认配置。\n")
+
+    if not isinstance(cfg.get("extra_body"), dict):
+        sys.stderr.write("警告：配置项 extra_body 必须是 JSON 对象，已忽略。\n")
+        cfg["extra_body"] = {}
     return cfg
 
 
@@ -145,6 +153,7 @@ class ChatApp:
         self.client = OpenAI(api_key=cfg["api_key"], base_url=cfg["base_url"])
         self.model: str = cfg["model"]
         self.temperature: float = float(cfg["temperature"])
+        self.extra_body: dict = dict(cfg.get("extra_body") or {})
 
         self.messages: list[dict] = []
         if cfg.get("system"):
@@ -177,6 +186,7 @@ class ChatApp:
             "model": self.model,
             "temperature": self.temperature,
             "system": self.get_system(),
+            "extra_body": self.extra_body,
         }
 
     def persist_session_log(self) -> None:
@@ -310,14 +320,17 @@ class ChatApp:
         last_paint = 0.0
 
         try:
-            stream = self.client.chat.completions.create(
-                model=self.model,
-                messages=self.messages,
-                temperature=self.temperature,
-                stream=True,
-                stream_options={"include_usage": True},
-                extra_body={"thinking": {"type": "disabled"}},
-            )
+            request: dict = {
+                "model": self.model,
+                "messages": self.messages,
+                "temperature": self.temperature,
+                "stream": True,
+                "stream_options": {"include_usage": True},
+            }
+            if self.extra_body:
+                request["extra_body"] = self.extra_body
+
+            stream = self.client.chat.completions.create(**request)
 
             status = self.console.status("[cli.info]思考中…[/cli.info]", spinner="dots")
             status.start()
@@ -460,6 +473,7 @@ class ChatApp:
             "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
             "model": self.model,
             "temperature": self.temperature,
+            "extra_body": self.extra_body,
             "messages": self.messages,
         }
         try:
@@ -490,6 +504,8 @@ class ChatApp:
         self.messages = messages
         if data.get("model"):
             self.model = data["model"]
+        if isinstance(data.get("extra_body"), dict):
+            self.extra_body = data["extra_body"]
         self.persist_session_log()
         self.console.print(
             f"[cli.info]✓ 已载入 {len(messages)} 条消息（模型：[/cli.info]"
@@ -696,6 +712,7 @@ def main(argv: list[str] | None = None) -> int:
                     "model": "gpt-4o-mini",
                     "system": "你是一个乐于助人的 AI 助手。",
                     "temperature": 0.7,
+                    "extra_body": {},
                 },
                 ensure_ascii=False,
                 indent=2,
