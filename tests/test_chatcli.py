@@ -6,6 +6,22 @@ import pytest
 import chatcli
 
 
+def test_default_config_path():
+    assert chatcli.CONFIG_FILE == chatcli.CONFIG_DIR / "config" / "config.json"
+
+
+def test_main_loads_and_saves_custom_config(tmp_path):
+    config_path = tmp_path / "nested" / "custom.json"
+    config_path.parent.mkdir()
+    config_path.write_text(json.dumps({"model": "custom-model"}), encoding="utf-8")
+
+    result = chatcli.main(["--config", str(config_path), "--save-config"])
+
+    saved_config = json.loads(config_path.read_text(encoding="utf-8"))
+    assert result == 0
+    assert saved_config["model"] == "custom-model"
+
+
 def test_load_config_defaults_extra_body(monkeypatch, tmp_path):
     monkeypatch.setattr(chatcli, "CONFIG_FILE", tmp_path / "missing.json")
 

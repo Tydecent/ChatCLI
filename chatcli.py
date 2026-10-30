@@ -52,7 +52,7 @@ except ImportError as exc:  # pragma: no cover
 VERSION = "1.0.0"
 
 CONFIG_DIR = Path(__file__).resolve().parent
-CONFIG_FILE = CONFIG_DIR / "config.json"
+CONFIG_FILE = CONFIG_DIR / "config" / "config.json"
 CHAT_HISTORY_DIR = CONFIG_DIR / "chathistory"
 
 DEFAULTS: dict = {
@@ -84,12 +84,13 @@ AI_REPLY_BOX = Box("    \n│   \n    \n│   \n│   \n    \n│   \n    \n")
 # --------------------------------------------------------------------------- #
 # 配置读写
 # --------------------------------------------------------------------------- #
-def load_config() -> dict:
+def load_config(config_file: Path | None = None) -> dict:
     cfg = dict(DEFAULTS)
     cfg["extra_body"] = dict(DEFAULTS["extra_body"])
-    if CONFIG_FILE.exists():
+    config_file = config_file or CONFIG_FILE
+    if config_file.exists():
         try:
-            data = json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+            data = json.loads(config_file.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 cfg.update({k: v for k, v in data.items() if k in DEFAULTS})
         except (OSError, json.JSONDecodeError) as exc:
@@ -131,13 +132,14 @@ def apply_args(cfg: dict, args: argparse.Namespace) -> dict:
     return cfg
 
 
-def save_config(cfg: dict) -> None:
-    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
-    CONFIG_FILE.write_text(
+def save_config(cfg: dict, config_file: Path | None = None) -> None:
+    config_file = config_file or CONFIG_FILE
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text(
         json.dumps(cfg, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     try:
-        CONFIG_FILE.chmod(0o600)  # 里面存了 API Key
+        config_file.chmod(0o600)  # 里面存了 API Key
     except OSError:
         pass
 
@@ -668,7 +670,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
             "          -m deepseek-ai/DeepSeek-V3           # 使用第三方兼容服务\n"
             "  chatcli -s '你是一个诗人' -t 1.2              # 自定义系统提示与温度\n"
             "  chatcli --save-config                        # 保存当前配置\n"
-            f"\n配置文件: {CONFIG_FILE}\n"
+            f"\n默认配置文件: {CONFIG_FILE}\n"
             f"JSON 会话日志目录: {CHAT_HISTORY_DIR}\n"
         ),
     )
@@ -677,6 +679,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("-k", "--api-key", help="API Key（优先使用环境变量）")
     parser.add_argument("-s", "--system", default=None, help="系统提示词")
     parser.add_argument("-t", "--temperature", type=float, default=None, help="采样温度 0~2")
+    parser.add_argument("--config", help=f"配置文件路径（默认 {CONFIG_FILE}）")
     parser.add_argument("--save-config", action="store_true", help="把当前配置写入配置文件后退出")
     parser.add_argument("--version", action="version", version=f"chatcli {VERSION}")
     return parser
@@ -684,14 +687,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
+    config_file = Path(args.config).expanduser() if args.config else CONFIG_FILE
 
-    cfg = load_config()
+    cfg = load_config(config_file)
     cfg = apply_env(cfg)
     cfg = apply_args(cfg, args)
 
     if args.save_config:
-        save_config(cfg)
-        print(f"✓ 已保存配置到 {CONFIG_FILE}")
+        save_config(cfg, config_file)
+        print(f"✓ 已保存配置到 {config_file}")
         return 0
 
     console = Console(theme=THEME, highlight=False)
@@ -700,7 +704,7 @@ def main(argv: list[str] | None = None) -> int:
         console.print("可以通过以下任意一种方式提供：\n")
         console.print("  1. 环境变量  [cyan]export OPENAI_API_KEY=\"sk-...\"[/cyan]")
         console.print("  2. 命令行    [cyan]chatcli -k sk-...[/cyan]")
-        console.print(f"  3. 配置文件  [cyan]{CONFIG_FILE}[/cyan]\n")
+        console.print(f"  3. 配置文件  [cyan]{config_file}[/cyan]\n")
         console.print("配置文件格式示例：")
         console.print_json(
             json.dumps(
