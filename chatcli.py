@@ -367,7 +367,7 @@ class ChatApp:
                         ),
                         console=self.console,
                         refresh_per_second=12,
-                        vertical_overflow="visible",
+                        vertical_overflow="ellipsis",
                     )
                     live.start()
 

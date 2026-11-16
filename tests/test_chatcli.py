@@ -105,3 +105,25 @@ def test_stream_reply_only_sends_nonempty_extra_body(
         assert request["extra_body"] == extra_body
     assert reply is None
     assert usage is None
+
+
+def test_stream_reply_bounds_live_overflow(monkeypatch):
+    app = chatcli.ChatApp.__new__(chatcli.ChatApp)
+    app.console = Mock()
+    app.client = Mock()
+    app.client.chat.completions.create.return_value = [
+        Mock(choices=[Mock(delta=Mock(content="hello"))], usage=None)
+    ]
+    app.model = "example-model"
+    app.messages = []
+    app.temperature = 0.7
+    app.extra_body = {}
+    live = Mock()
+    live_factory = Mock(return_value=live)
+    monkeypatch.setattr(chatcli, "Live", live_factory)
+
+    reply, usage = app.stream_reply()
+
+    assert reply == "hello"
+    assert usage is None
+    assert live_factory.call_args.kwargs["vertical_overflow"] == "ellipsis"
